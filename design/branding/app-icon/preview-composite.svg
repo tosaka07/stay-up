@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="stayup-bg" gradientUnits="userSpaceOnUse"
+      x1="162.2975" y1="-93.7025" x2="861.7025" y2="1117.7025">
+      <stop offset="0" stop-color="#7368D4"/>
+      <stop offset="1" stop-color="#172764"/>
+    </linearGradient>
+    <clipPath id="stayup-squircle">
+      <rect width="1024" height="1024" rx="230" ry="230"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#stayup-squircle)">
+    <rect width="1024" height="1024" fill="url(#stayup-bg)"/>
+    <g fill="#FFFFFF" fill-opacity="0.26">
+      <path d="M221.4815 333.3037L556.9481 333.3037A38.3704 38.3704 0 0 0 556.9481 256.563L221.4815 256.563A38.3704 38.3704 0 0 0 221.4815 333.3037Z"/>
+      <path d="M467.0519 550.3704L802.5185 550.3704A38.3704 38.3704 0 0 0 802.5185 473.6296L467.0519 473.6296A38.3704 38.3704 0 0 0 467.0519 550.3704Z"/>
+      <path d="M313.5704 767.437L649.037 767.437A38.3704 38.3704 0 0 0 649.037 690.6963L313.5704 690.6963A38.3704 38.3704 0 0 0 313.5704 767.437Z"/>
+    </g>
+    <path fill="#FFFFFF" fill-opacity="0.68" d="M746.7845 567.1953A241.1852 241.1852 0 1 1 474.3235 273.7758A213.7778 213.7778 0 0 0 746.7845 567.1953Z"/>
+    <path fill="#FFFFFF" fill-opacity="0.5" d="M330.9101 714.0414L742.4179 368.7454A38.3704 38.3704 0 0 0 693.0899 309.9586L281.5821 655.2546A38.3704 38.3704 0 0 0 330.9101 714.0414Z"/>
+  </g>
+</svg>

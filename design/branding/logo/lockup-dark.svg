@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="196" height="40" viewBox="0 0 196 40">
+  <g transform="translate(3 3) scale(0.53125)">
+    <path fill="#FFFFFF" fill-opacity="0.82" d="M53.251 35.2625A21.5 21.5 0 1 1 30.5943 10.546A17 17 0 0 0 53.251 35.2625Z"/>
+    <path fill="#FFFFFF" fill-opacity="0.6" d="M15.4817 50.4295L53.0178 18.9329A3.5 3.5 0 0 0 48.5183 13.5705L10.9822 45.0671A3.5 3.5 0 0 0 15.4817 50.4295Z"/>
+  </g>
+  <text x="49" y="20" fill="#F4F5F6" dominant-baseline="central"
+    font-family="Helvetica Neue, Helvetica, sans-serif" font-size="24" font-weight="600"
+    letter-spacing="-0.672">StayUp</text>
+</svg>

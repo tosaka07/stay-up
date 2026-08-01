@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="stayup-bg" gradientUnits="userSpaceOnUse"
+      x1="162.2975" y1="-93.7025" x2="861.7025" y2="1117.7025">
+      <stop offset="0" stop-color="#7368D4"/>
+      <stop offset="1" stop-color="#172764"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#stayup-bg)"/>
+</svg>

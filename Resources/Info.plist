@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>ja</string>
+	<key>CFBundleExecutable</key>
+	<string>StayUp</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.tosaka.StayUp</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>StayUp</string>
+	<key>CFBundleDisplayName</key>
+	<string>StayUp</string>
+	<!-- Resources/StayUp.icon を actool でコンパイルしたもの。
+	     この 2 つのキーは actool の partial Info.plist と同じ値にしておく -->
+	<key>CFBundleIconFile</key>
+	<string>StayUp</string>
+	<key>CFBundleIconName</key>
+	<string>StayUp</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<!-- メニューバー常駐。Dock には出さない（ウィンドウを開いたときだけ切り替える） -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>StayUp</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.tosaka.StayUp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stay-up</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

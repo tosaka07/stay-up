@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.tosaka.StayUp.Helper</string>
+	<!-- SMAppService.daemon は .app 内の相対パスを解決する -->
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/StayUpHelper</string>
+	<key>MachServices</key>
+	<dict>
+		<key>dev.tosaka.StayUp.Helper</key>
+		<true/>
+	</dict>
+	<!-- 接続が来たときだけ起動し、暇になれば落ちてよい。
+	     残留した disablesleep は起動時の孤児チェックが回収する。 -->
+	<key>KeepAlive</key>
+	<false/>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>dev.tosaka.StayUp</string>
+	</array>
+</dict>
+</plist>
