@@ -49,9 +49,6 @@ enum StartDurationPreset: UInt32, CaseIterable, Identifiable {
         }
     }
 
-    static func matching(seconds: Int?) -> Self? {
-        allCases.first { $0.seconds == seconds }
-    }
 }
 
 enum GlobalHotKeyAction: Equatable {

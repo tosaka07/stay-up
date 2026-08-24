@@ -128,14 +128,8 @@ struct MenuBarContent: View {
     }
 
     private func startButton(_ preset: StartDurationPreset) -> some View {
-        Button {
+        Button(preset.actionTitle) {
             acquire(ttl: preset.seconds)
-        } label: {
-            if manager.settings.defaultDurationSeconds == preset.seconds {
-                Label(preset.actionTitle, systemImage: "checkmark")
-            } else {
-                Text(preset.actionTitle)
-            }
         }
         .keyboardShortcut(preset.keyEquivalent, modifiers: .stayUpGlobalHotKey)
     }

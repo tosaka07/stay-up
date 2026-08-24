@@ -109,33 +109,16 @@ struct MainWindow: View {
                     durationButton(.unlimited)
                 } label: {
                     Image(systemName: "play.fill")
-                } primaryAction: {
-                    acquire(ttl: manager.settings.defaultDurationSeconds)
                 }
-                .accessibilityLabel(defaultStartTitle)
-                .help("\(defaultStartTitle)。矢印から別の期間を選べます")
+                .accessibilityLabel("開始する期間を選ぶ")
+                .help("開始する期間を選びます")
             }
         }
-    }
-
-    private var defaultStartTitle: String {
-        let seconds = manager.settings.defaultDurationSeconds
-        if let preset = StartDurationPreset.matching(seconds: seconds) {
-            return preset.actionTitle
-        }
-        guard let seconds else { return StartDurationPreset.unlimited.actionTitle }
-        return "\(DurationParsing.format(seconds: seconds))で開始"
     }
 
     private func durationButton(_ preset: StartDurationPreset) -> some View {
-        Button {
+        Button(preset.actionTitle) {
             acquire(ttl: preset.seconds)
-        } label: {
-            if manager.settings.defaultDurationSeconds == preset.seconds {
-                Label(preset.actionTitle, systemImage: "checkmark")
-            } else {
-                Text(preset.actionTitle)
-            }
         }
         .keyboardShortcut(preset.keyEquivalent, modifiers: .stayUpGlobalHotKey)
     }

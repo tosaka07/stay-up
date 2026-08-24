@@ -80,14 +80,18 @@ struct IntegrationsView: View {
 struct SettingsView: View {
     @Bindable var manager: SessionManager
 
+    /// macOS 側の登録状態を写したもの。真実は OS にあるので、操作のたびに読み直す。
+    @State private var launchAtLogin = false
+    @State private var loginItemError: String?
+
     var body: some View {
         Form {
             Section {
-                Picker("既定の期間", selection: $manager.settings.defaultDurationSeconds) {
-                    Text("30分").tag(30 * 60 as Int?)
-                    Text("1時間").tag(60 * 60 as Int?)
-                    Text("2時間").tag(2 * 60 * 60 as Int?)
-                    Text("無期限").tag(nil as Int?)
+                Toggle("ログイン時に起動", isOn: launchAtLoginBinding)
+                if let loginItemError {
+                    Label(loginItemError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.red)
                 }
 
                 Toggle(
@@ -153,6 +157,19 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .task { launchAtLogin = LoginItem.isEnabled }
+    }
+
+    /// 書き込んだあと必ず OS から読み直す。
+    /// 失敗しても表示だけ切り替わる、という嘘を作らないため。
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin },
+            set: { newValue in
+                loginItemError = LoginItem.setEnabled(newValue)
+                launchAtLogin = LoginItem.isEnabled
+            }
+        )
     }
 
     private var batteryLimitEnabled: Binding<Bool> {
