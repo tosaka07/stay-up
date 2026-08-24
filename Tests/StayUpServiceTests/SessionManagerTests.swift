@@ -57,6 +57,17 @@ private final class FakeHelper: PrivilegedSleepControlling, @unchecked Sendable 
 
     func disconnect() {}
 
+    /// unregister を失敗させる。
+    var unregisterShouldThrow = false
+    private(set) var didUnregister = false
+
+    func unregister() throws {
+        if unregisterShouldThrow {
+            throw ControlError(code: .generic, message: "テスト用の登録解除失敗")
+        }
+        lock.withLock { didUnregister = true }
+    }
+
     /// 接続断を再現する。
     func simulateConnectionLoss() {
         onConnectionLost?()
@@ -187,7 +198,10 @@ private func makeManager(
     power: FakePower = FakePower(),
     watcher: any ProcessWatching = ProcessWatcher(),
     exitObserver: any ProcessExitObserving = ProcessExitObserver(),
-    sleepStateReader: any SleepStateReading = PMSetSleepStateReader()
+    sleepStateReader: any SleepStateReading = PMSetSleepStateReader(),
+    thermalGraceSeconds: TimeInterval = 60,
+    processNameGraceSeconds: TimeInterval = 10,
+    approvalTimeoutSeconds: TimeInterval = 30
 ) -> (SessionManager, FakeAssertions, FakeHelper, FakePower, URL) {
     let dir = URL(filePath: NSTemporaryDirectory())
         .appending(path: "stayup-svc-\(UUID().uuidString)")
@@ -204,7 +218,10 @@ private func makeManager(
         history: HistoryStore(directory: dir.appending(path: "history")),
         stateStore: StateStore(fileURL: dir.appending(path: "state.json")),
         // UserDefaults を汚さないため設定の永続化は無効にする
-        settingsStore: nil
+        settingsStore: nil,
+        thermalGraceSeconds: thermalGraceSeconds,
+        processNameGraceSeconds: processNameGraceSeconds,
+        approvalTimeoutSeconds: approvalTimeoutSeconds
     )
     manager.settings = settings
     return (manager, assertions, helper, power, dir)
@@ -514,13 +531,14 @@ struct GlobalStopTests {
         await manager.shutdown()
     }
 
-    @Test("熱の危険域では無効化できずに全失効する")
+    @Test("熱の危険域が続けば無効化できずに全失効する")
     func thermalRevokesEverything() async {
         let power = FakePower(thermalCritical: true)
         let (manager, _, _, _, dir) = makeManager(
             // 熱以外のグローバル条件は全て無効にしておく
             settings: Settings(batteryThreshold: nil, maxTotalDurationSeconds: nil, clientPolicy: .allow),
-            power: power
+            power: power,
+            thermalGraceSeconds: 0.1
         )
         defer { try? FileManager.default.removeItem(at: dir) }
         manager.start()
@@ -528,7 +546,8 @@ struct GlobalStopTests {
         _ = await manager.acquire(
             client: .external(name: "a", pid: 1), label: "a", ttlSeconds: 3600, binding: nil
         )
-        try? await Task.sleep(for: .milliseconds(1300))
+        // 1 ティック目で計測を始め、2 ティック目で猶予超過を検出する
+        try? await Task.sleep(for: .milliseconds(2300))
 
         #expect(manager.leases.isEmpty)
         await manager.shutdown()
@@ -1065,5 +1084,260 @@ struct ShutdownTests {
         #expect(!helper.disableSleepIsSet)
         #expect(!assertions.isHeld)
         #expect(manager.warnings.isEmpty)
+    }
+
+    // MARK: - アンインストール導線
+
+    @Test("uninstallHelper は復元を確認してから登録解除する")
+    func uninstallHelperVerifiesBeforeUnregistering() async {
+        let helper = FakeHelper()
+        let (manager, assertions, _, _, dir) = makeManager(
+            helper: helper,
+            sleepStateReader: FakeSleepStateReader(sleepDisabled: false)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = await manager.acquire(
+            client: .external(name: "a", pid: 1), label: "a", ttlSeconds: 3600, binding: nil
+        )
+        let result = await manager.uninstallHelper()
+
+        if case .failure(let error) = result {
+            Issue.record("成功するはずが失敗しました: \(error.message)")
+        }
+        #expect(helper.didUnregister)
+        #expect(!helper.disableSleepIsSet)
+        #expect(!assertions.isHeld)
+        #expect(manager.leases.isEmpty)
+        #expect(manager.state == .idle)
+    }
+
+    @Test("disablesleep が 1 のままなら登録解除しない")
+    func uninstallHelperAbortsWhenStillDisabled() async {
+        let helper = FakeHelper()
+        let (manager, _, _, _, dir) = makeManager(
+            helper: helper,
+            sleepStateReader: FakeSleepStateReader(sleepDisabled: true)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let result = await manager.uninstallHelper()
+
+        guard case .failure(.stillDisabled) = result else {
+            Issue.record("stillDisabled になるはずでした")
+            return
+        }
+        // 復元を担う唯一のプロセスを残す。これが中止の意味。
+        #expect(!helper.didUnregister)
+    }
+
+    @Test("disablesleep を読めないなら登録解除しない")
+    func uninstallHelperAbortsWhenStateUnknown() async {
+        let helper = FakeHelper()
+        let (manager, _, _, _, dir) = makeManager(
+            helper: helper,
+            sleepStateReader: FakeSleepStateReader(sleepDisabled: nil)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let result = await manager.uninstallHelper()
+
+        guard case .failure(.stateUnknown) = result else {
+            Issue.record("stateUnknown になるはずでした")
+            return
+        }
+        #expect(!helper.didUnregister)
+    }
+
+    @Test("登録解除そのものが失敗したら理由を返す")
+    func uninstallHelperReportsUnregisterFailure() async {
+        let helper = FakeHelper()
+        helper.unregisterShouldThrow = true
+        let (manager, _, _, _, dir) = makeManager(
+            helper: helper,
+            sleepStateReader: FakeSleepStateReader(sleepDisabled: false)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let result = await manager.uninstallHelper()
+
+        guard case .failure(.unregisterFailed) = result else {
+            Issue.record("unregisterFailed になるはずでした")
+            return
+        }
+        #expect(!helper.didUnregister)
+    }
+
+    @Test("ヘルパーが使えないときは pmset の残留を理由に止めない")
+    func uninstallHelperSkipsVerificationWhenUnavailable() async {
+        // 使えないヘルパーは何も抑止できない。残った 1 は他ツールのもので、
+        // それを理由にこちらの登録解除を妨げるのは筋が違う。
+        let helper = FakeHelper(isAvailable: false)
+        let (manager, _, _, _, dir) = makeManager(
+            helper: helper,
+            sleepStateReader: FakeSleepStateReader(sleepDisabled: true)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let result = await manager.uninstallHelper()
+
+        if case .failure(let error) = result {
+            Issue.record("成功するはずが失敗しました: \(error.message)")
+        }
+        #expect(helper.didUnregister)
+    }
+
+    @Test("HelperUninstallError は中止した理由を説明する")
+    func uninstallErrorMessages() {
+        #expect(HelperUninstallError.stillDisabled.message.contains("中止"))
+        #expect(HelperUninstallError.stateUnknown.message.contains("確認できない"))
+        #expect(HelperUninstallError.unregisterFailed("詳細X").message.contains("詳細X"))
+    }
+}
+
+/// 記録用の小さな受け皿。
+private final class MessageRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+
+    var all: [String] { lock.withLock { messages } }
+
+    func record(_ message: String) {
+        lock.withLock { messages.append(message) }
+    }
+}
+
+@Suite("SessionManager: 誤爆させないための猶予", .serialized)
+@MainActor
+struct SessionManagerGraceTests {
+    @Test("熱が一瞬 critical になっただけではリースを消さない")
+    func thermalSpikeDoesNotRevoke() async {
+        // ふたを閉じて CPU を回すのが本来の用途なので、
+        // 瞬間的な critical で全部飛ばすと目的そのものを壊す。
+        let power = FakePower(thermalCritical: true)
+        let (manager, _, _, _, dir) = makeManager(
+            settings: Settings(batteryThreshold: nil, maxTotalDurationSeconds: nil, clientPolicy: .allow),
+            power: power,
+            thermalGraceSeconds: 60
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        manager.start()
+
+        _ = await manager.acquire(
+            client: .external(name: "a", pid: 1), label: "a", ttlSeconds: 3600, binding: nil
+        )
+        try? await Task.sleep(for: .milliseconds(2300))
+
+        #expect(!manager.leases.isEmpty)
+        await manager.shutdown()
+    }
+
+    @Test("プロセス名バインドは猶予の内側なら生き残る")
+    func processNameBindingSurvivesRestart() async {
+        let watcher = FakeProcessWatcher(alive: true)
+        let (manager, _, _, _, dir) = makeManager(
+            watcher: watcher,
+            processNameGraceSeconds: 60
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        manager.start()
+
+        _ = await manager.acquire(
+            client: .external(name: "a", pid: 1), label: "a",
+            ttlSeconds: 3600, binding: .processName("dummy")
+        )
+        // まず生きている状態で 1 ティック回してから、再起動の一瞬を再現する
+        try? await Task.sleep(for: .milliseconds(1200))
+        watcher.setAlive(false)
+        try? await Task.sleep(for: .milliseconds(2300))
+
+        #expect(!manager.leases.isEmpty)
+        await manager.shutdown()
+    }
+
+    @Test("プロセス名バインドは猶予を超えたら解放される")
+    func processNameBindingReleasedAfterGrace() async {
+        let watcher = FakeProcessWatcher(alive: true)
+        let (manager, _, _, _, dir) = makeManager(
+            watcher: watcher,
+            processNameGraceSeconds: 0.1
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        manager.start()
+
+        _ = await manager.acquire(
+            client: .external(name: "a", pid: 1), label: "a",
+            ttlSeconds: 3600, binding: .processName("dummy")
+        )
+        watcher.setAlive(false)
+        try? await Task.sleep(for: .milliseconds(2300))
+
+        #expect(manager.leases.isEmpty)
+        await manager.shutdown()
+    }
+
+    @Test("承認の応答がなければタイムアウトして拒否する")
+    func approvalTimesOut() async {
+        let (manager, _, _, _, dir) = makeManager(
+            settings: Settings(clientPolicy: .ask),
+            approvalTimeoutSeconds: 0.2
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 応答を返さない UI を再現する。無期限に待たないことを確かめる。
+        manager.approvalHandler = { _, _ in
+            try? await Task.sleep(for: .seconds(30))
+            return true
+        }
+
+        let result = await manager.acquire(
+            client: .external(name: "slow", pid: 1), label: "x", ttlSeconds: 60, binding: nil
+        )
+
+        guard case .failure(let error) = result else {
+            Issue.record("タイムアウトで拒否されるはずでした")
+            return
+        }
+        #expect(error.code == ControlErrorCode.denied.rawValue)
+        #expect(manager.leases.isEmpty)
+    }
+
+    @Test("復元に失敗したら警告と通知を出す")
+    func restoreFailureIsReported() async {
+        let helper = FakeHelper()
+        let (manager, _, _, _, dir) = makeManager(helper: helper)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = await manager.acquire(
+            client: .external(name: "a", pid: 1), label: "a", ttlSeconds: 3600, binding: nil
+        )
+        #expect(manager.capability == .full)
+
+        let recorder = MessageRecorder()
+        manager.onRestoreFailed = { recorder.record($0) }
+        helper.shouldFail = true
+        _ = await manager.releaseAll(requestedBy: nil)
+
+        #expect(recorder.all.count == 1)
+        #expect(manager.warnings.contains { $0.contains("復元に失敗") })
+    }
+
+    @Test("degraded では復元の失敗を報告しない")
+    func degradedRestoreFailureIsSilent() async {
+        // 1 にしていないのだから、戻せなくても報告することはない。
+        let helper = FakeHelper(isAvailable: false)
+        let (manager, _, _, _, dir) = makeManager(helper: helper)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = await manager.acquire(
+            client: .external(name: "a", pid: 1), label: "a", ttlSeconds: 3600, binding: nil
+        )
+        #expect(manager.capability == .idleOnly)
+
+        let recorder = MessageRecorder()
+        manager.onRestoreFailed = { recorder.record($0) }
+        _ = await manager.releaseAll(requestedBy: nil)
+
+        #expect(recorder.all.isEmpty)
     }
 }

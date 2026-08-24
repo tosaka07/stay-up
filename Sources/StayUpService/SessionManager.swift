@@ -29,9 +29,11 @@ public final class SessionManager {
 
     /// 承認が必要なクライアントが現れたときに UI へ問い合わせる。
     /// nil のときは `ask` を `deny` として扱う（UI が無い状況で勝手に許可しない）。
-    public var approvalHandler: ((String, String?) async -> Bool)?
+    public var approvalHandler: (@Sendable (String, String?) async -> Bool)?
     /// リースが自動で失効したときの通知用。
     public var onAutoRelease: (([Lease], ReleaseReason) -> Void)?
+    /// `disablesleep` を 0 に戻せなかったときの通知用（spec §8.4）。
+    public var onRestoreFailed: ((String) -> Void)?
 
     // MARK: - 依存
 
@@ -48,6 +50,17 @@ public final class SessionManager {
 
     private var registry = LeaseRegistry()
     private var ticker: Timer?
+    /// 熱が critical になった時刻。継続時間で判定するため（spec §7.5）。
+    private var thermalCriticalSince: Date?
+    /// プロセス名バインドが見つからなくなった時刻。binding の表示名で引く（spec §7.3）。
+    private var bindingMissingSince: [String: Date] = [:]
+
+    /// 熱が critical のまま何秒続いたら全失効させるか（spec §7.5）。
+    private let thermalGraceSeconds: TimeInterval
+    /// プロセス名が見つからないまま何秒続いたらバインドを失ったと見なすか（spec §7.3）。
+    private let processNameGraceSeconds: TimeInterval
+    /// 承認の応答を何秒待つか（spec §10）。
+    private let approvalTimeoutSeconds: TimeInterval
     /// 承認待ち・承認済みの判断をここで一度だけ行う。
     private var sessionApprovedClients: Set<String> = []
 
@@ -61,8 +74,14 @@ public final class SessionManager {
         sleepStateReader: any SleepStateReading = PMSetSleepStateReader(),
         history: HistoryStore = HistoryStore(),
         stateStore: StateStore = StateStore(),
-        settingsStore: SettingsStore? = SettingsStore()
+        settingsStore: SettingsStore? = SettingsStore(),
+        thermalGraceSeconds: TimeInterval = 60,
+        processNameGraceSeconds: TimeInterval = 10,
+        approvalTimeoutSeconds: TimeInterval = 30
     ) {
+        self.thermalGraceSeconds = thermalGraceSeconds
+        self.processNameGraceSeconds = processNameGraceSeconds
+        self.approvalTimeoutSeconds = approvalTimeoutSeconds
         self.settingsStore = settingsStore
         self.settings = settingsStore?.load() ?? settings
         self.assertions = assertions
@@ -308,7 +327,9 @@ public final class SessionManager {
         state = .deactivating
 
         assertions.releaseAll()
-        _ = await helper.setDisableSleep(false)
+        await restoreDisableSleep()
+        thermalCriticalSince = nil
+        bindingMissingSince = [:]
 
         let duration = suppressionStartedAt.map { Int(Date().timeIntervalSince($0).rounded()) }
         history.append(HistoryEvent(event: .suppressionEnded, duration: duration, leaseCount: 0))
@@ -361,15 +382,11 @@ public final class SessionManager {
             onAutoRelease?(expired, .ttlExpired)
         }
 
-        let hasLostBinding = registry.leases.contains { [watcher] lease in
-            guard let binding = lease.binding else { return false }
-            return !watcher.isAlive(binding)
-        }
-        let lost = hasLostBinding
-            ? registry.releaseLostBindings { [watcher] binding in
-                watcher.isAlive(binding)
-            }
-            : []
+        // プロセス名だけは猶予込みで判定する。
+        let lostKeys = lostBindingKeys(now: now)
+        let lost = lostKeys.isEmpty
+            ? []
+            : registry.releaseLostBindings { !lostKeys.contains($0.displayText) }
         if !lost.isEmpty {
             finishRelease(lost, reason: .bindingLost)
             onAutoRelease?(lost, .bindingLost)
@@ -380,10 +397,64 @@ public final class SessionManager {
         }
     }
 
+    /// `disablesleep` を 0 に戻す。失敗したら警告と通知に載せる（spec §8.4）。
+    ///
+    /// `degraded` では 1 にしていないので、失敗しても報告しない。
+    /// 報告すべきなのは「1 にしたのに戻せなかった」ときだけである。
+    private func restoreDisableSleep() async {
+        let wasFull = capability == .full
+        guard case .failure(let error) = await helper.setDisableSleep(false), wasFull else {
+            return
+        }
+        let message = "スリープ設定の復元に失敗しました: \(error.message)"
+        appendWarning(message)
+        history.append(HistoryEvent(event: .helperError, detail: message))
+        log.fault("\(message, privacy: .public)")
+        onRestoreFailed?(message)
+    }
+
+    /// 失ったと見なす binding の識別子を返す。
+    ///
+    /// プロセス名バインドだけは猶予を置く。再起動するツールに紐づけたとき、
+    /// 落ちてから上がるまでの一瞬でリースが消えるのを防ぐため（spec §7.3）。
+    /// PID とリースファイルは、消滅がそのまま終了を意味するので即座に失う。
+    private func lostBindingKeys(now: Date) -> Set<String> {
+        var lost: Set<String> = []
+        // 現存するリースの分だけ作り直すので、消えた binding の記録は自然に落ちる。
+        var nextMissingSince: [String: Date] = [:]
+
+        for lease in registry.leases {
+            guard let binding = lease.binding else { continue }
+            if watcher.isAlive(binding) { continue }
+
+            let key = binding.displayText
+            guard case .processName = binding else {
+                lost.insert(key)
+                continue
+            }
+            let since = bindingMissingSince[key] ?? now
+            nextMissingSince[key] = since
+            if now.timeIntervalSince(since) >= processNameGraceSeconds {
+                lost.insert(key)
+            }
+        }
+
+        bindingMissingSince = nextMissingSince
+        return lost
+    }
+
     /// グローバル停止条件の評価（spec §7.2 / §7.5 / §7.6）。
     private func evaluateGlobalStop(now: Date) -> ReleaseReason? {
-        // 熱は無効化できない安全機構
-        if power.isThermalCritical { return .thermal }
+        // 熱は無効化できない安全機構。ただし瞬間値では判定しない。
+        // ふたを閉じて長時間 CPU を回すのが本来の用途なので、
+        // 一瞬の critical で全リースを飛ばすと目的そのものを壊す（spec §7.5）。
+        if power.isThermalCritical {
+            let since = thermalCriticalSince ?? now
+            thermalCriticalSince = since
+            if now.timeIntervalSince(since) >= thermalGraceSeconds { return .thermal }
+        } else {
+            thermalCriticalSince = nil
+        }
 
         if let threshold = settings.batteryThreshold,
            battery.source == .battery,
@@ -467,12 +538,57 @@ public final class SessionManager {
         let victims = registry.revokeAll()
         if !victims.isEmpty { recordReleases(victims, reason: .explicit) }
         assertions.releaseAll()
-        _ = await helper.setDisableSleep(false)
+        // 先に消してから復元する。復元が失敗したら、その警告は残す。
         warnings.removeAll()
+        await restoreDisableSleep()
+        thermalCriticalSince = nil
+        bindingMissingSince = [:]
         suppressionStartedAt = nil
         capability = .idleOnly
         state = .idle
         refresh()
+    }
+
+    /// ヘルパーの登録を解除する（アンインストール導線）。
+    ///
+    /// **順序そのものが保証**である。先に `disablesleep` を 0 へ戻し、
+    /// **実際に 0 になったことを確認してから**登録解除する。
+    /// 逆順にすると復元を担う唯一のプロセスが先に消え、
+    /// 誰も戻せない `disablesleep=1` が利用者の Mac に残る。
+    ///
+    /// 確認は `setDisableSleep` の戻り値ではなく `pmset` の実測値で行う。
+    /// 「成功と報告されたが実際には変わっていない」を弾くためである。
+    public func uninstallHelper() async -> Result<Void, HelperUninstallError> {
+        // ヘルパーが使えないなら、そもそも何も抑止できていない。
+        // 残った 1 は他ツールのものなので、こちらの都合で触らない。
+        let mustVerify = helper.isAvailable
+
+        await forceRestore()
+
+        if mustVerify {
+            switch sleepStateReader.isSleepDisabled() {
+            case .some(true):
+                log.error("disablesleep が 0 に戻らないため、登録解除を中止しました")
+                return .failure(.stillDisabled)
+            case .none:
+                log.error("disablesleep の実値を読めないため、登録解除を中止しました")
+                return .failure(.stateUnknown)
+            case .some(false):
+                break
+            }
+        }
+
+        do {
+            try helper.unregister()
+        } catch {
+            return .failure(.unregisterFailed(error.localizedDescription))
+        }
+
+        helper.disconnect()
+        history.append(HistoryEvent(event: .suppressionEnded, reason: "helperUninstalled"))
+        log.notice("ヘルパーの登録を解除しました")
+        refresh()
+        return .success(())
     }
 
     // MARK: - 承認
@@ -499,7 +615,7 @@ public final class SessionManager {
                     nonFatal: true
                 ))
             }
-            let approved = await approvalHandler(name, reason)
+            let approved = await awaitApproval(approvalHandler, name: name, reason: reason)
             guard approved else {
                 return .failure(ControlError(
                     code: .denied,
@@ -556,6 +672,31 @@ public final class SessionManager {
         }
     }
 
+    /// 承認の応答を待つ。応答がなければ既定で拒否する（spec §10）。
+    ///
+    /// 無期限に待つと、呼び出し元の CLI と、直列で回っているソケットの
+    /// ワーカが道連れになる。UI 側が固まっても、ここで必ず切り上げる。
+    /// 遅れて届いた応答は `OneShotContinuation` が捨てる。
+    private func awaitApproval(
+        _ handler: @escaping @Sendable (String, String?) async -> Bool,
+        name: String,
+        reason: String?
+    ) async -> Bool {
+        let timeout = approvalTimeoutSeconds
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let gate = OneShotContinuation(continuation)
+            Task {
+                gate.resume(await handler(name, reason))
+            }
+            // detached にする。MainActor に載せると、UI が runModal で
+            // メインを掴んでいる間このタスクも動けず、タイムアウトが機能しない。
+            Task.detached {
+                try? await Task.sleep(for: .seconds(timeout))
+                gate.resume(false)
+            }
+        }
+    }
+
     private func refresh() {
         leases = registry.leases
         persist()
@@ -566,5 +707,29 @@ public final class SessionManager {
             leases: registry.leases,
             disableSleepSetAt: capability == .full ? suppressionStartedAt : nil
         ))
+    }
+}
+
+/// アンインストール導線の失敗。
+///
+/// いずれも「登録解除を**行わなかった**」ことを意味する。
+/// 中止した側が安全側であり、ヘルパーは登録されたまま残る。
+public enum HelperUninstallError: Error, Equatable, Sendable {
+    /// `disablesleep` が 0 に戻っていない。
+    case stillDisabled
+    /// `disablesleep` の実値を読めなかった。
+    case stateUnknown
+    /// 復元は済んだが、登録解除そのものが失敗した。
+    case unregisterFailed(String)
+
+    public var message: String {
+        switch self {
+        case .stillDisabled:
+            "スリープ設定が元に戻らなかったため、登録解除を中止しました。"
+        case .stateUnknown:
+            "スリープ設定の現在値を確認できないため、登録解除を中止しました。"
+        case .unregisterFailed(let detail):
+            "ヘルパーの登録を解除できませんでした: \(detail)"
+        }
     }
 }

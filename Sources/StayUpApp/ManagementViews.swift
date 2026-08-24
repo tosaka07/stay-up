@@ -195,6 +195,10 @@ struct DiagnosticsView: View {
 
     @State private var pmsetOutput = ""
     @State private var isLoading = false
+    @State private var isConfirmingUninstall = false
+    @State private var isUninstalling = false
+    @State private var uninstallMessage: String?
+    @State private var uninstallFailed = false
 
     var body: some View {
         ScrollView {
@@ -274,6 +278,62 @@ struct DiagnosticsView: View {
                     }
                     .padding(8)
                 }
+
+                // 登録済みのときだけ出す。入り口があって出口がない状態を作らない。
+                if helperStatus == .enabled || helperStatus == .requiresApproval {
+                    GroupBox {
+                        HStack(alignment: .top, spacing: 14) {
+                            Image(systemName: "trash.fill")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("ヘルパーの登録を解除")
+                                    .font(.headline)
+                                Text("""
+                                    スリープ設定を元に戻してから、rootヘルパーを登録解除します。\
+                                    以降はふたを閉じるとスリープします。
+                                    """)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+
+                                if let uninstallMessage {
+                                    Label(
+                                        uninstallMessage,
+                                        systemImage: uninstallFailed
+                                            ? "exclamationmark.triangle.fill"
+                                            : "checkmark.circle.fill"
+                                    )
+                                    .font(.callout)
+                                    .foregroundStyle(uninstallFailed ? Color.red : Color.green)
+                                }
+                            }
+
+                            Spacer()
+
+                            Button("登録を解除", role: .destructive) {
+                                isConfirmingUninstall = true
+                            }
+                            .disabled(isUninstalling)
+                        }
+                        .padding(8)
+                    }
+                    .confirmationDialog(
+                        "ヘルパーの登録を解除しますか？",
+                        isPresented: $isConfirmingUninstall,
+                        titleVisibility: .visible
+                    ) {
+                        Button("登録を解除", role: .destructive) {
+                            Task { await uninstall() }
+                        }
+                        Button("キャンセル", role: .cancel) {}
+                    } message: {
+                        Text("""
+                            実行中のセッションはすべて破棄されます。\
+                            ふたを閉じてもスリープしない設定は使えなくなります。
+                            """)
+                    }
+                }
             }
             .frame(maxWidth: 820)
             .padding(32)
@@ -289,6 +349,25 @@ struct DiagnosticsView: View {
             .compactMap { $0 }
             .joined(separator: "\n\n")
         isLoading = false
+    }
+
+    /// 順序の保証は `SessionManager.uninstallHelper()` が持つ。
+    /// ここは確認・進行中の抑止・結果表示だけを担当する。
+    private func uninstall() async {
+        isUninstalling = true
+        defer { isUninstalling = false }
+
+        switch await manager.uninstallHelper() {
+        case .success:
+            uninstallFailed = false
+            uninstallMessage = "登録を解除しました。システム設定から項目が消えるまで数秒かかることがあります。"
+        case .failure(let error):
+            uninstallFailed = true
+            uninstallMessage = error.message
+        }
+
+        reload()
+        onRefreshHelper()
     }
 }
 

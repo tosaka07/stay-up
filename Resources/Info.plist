@@ -32,7 +32,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>StayUp</string>
+	<string>Copyright © 2026 Shogo Sakaue. MIT License.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

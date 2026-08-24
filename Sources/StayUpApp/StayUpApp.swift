@@ -119,6 +119,7 @@ final class AppServices {
     static let shared = AppServices()
 
     let manager = SessionManager()
+    private let notifier = Notifier()
     private var socketServer: ControlSocketServer?
     private let globalHotKeys = GlobalHotKeyController()
     private var started = false
@@ -132,6 +133,16 @@ final class AppServices {
         manager.approvalHandler = { [weak self] name, reason in
             await self?.requestApproval(clientNamed: name, reason: reason) ?? false
         }
+        // 自動失効と復元失敗は、画面を見ていなくても届く必要がある（spec §8.4）
+        manager.onAutoRelease = { [weak self] leases, reason in
+            self?.notifier.notifyGlobalStop(leases: leases, reason: reason)
+        }
+        manager.onRestoreFailed = { [weak self] message in
+            self?.notifier.notifyRestoreFailure(message)
+        }
+        // 許可ダイアログの応答を待たない。待つとソケットが開かず、
+        // 利用者がダイアログを閉じるまで CLI が繋がらなくなる。
+        Task { await notifier.requestAuthorization() }
         startGlobalHotKeys()
         manager.start()
         await manager.recoverOwnedOrphanedState()
@@ -192,6 +203,14 @@ final class AppServices {
         alert.addButton(withTitle: "拒否")
         alert.alertStyle = .informational
 
+        // このダイアログは自分では閉じない。
+        //
+        // `runModal()` はメインスレッドを完全に握るため、DispatchQueue でも
+        // common モードの Timer でも畳めないことを実測で確認している。
+        // 自動で閉じるには非ブロッキングなシートに作り替える必要があり、0.1.0 では見送った。
+        //
+        // ただし SessionManager 側は 30 秒で拒否を確定させるので、
+        // 後から「許可」が押されてもリースは作られない（spec §10）。
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
 

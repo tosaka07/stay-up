@@ -17,6 +17,12 @@ public protocol PrivilegedSleepControlling: AnyObject, Sendable {
 
     func setDisableSleep(_ enabled: Bool) async -> Result<Void, ControlError>
     func disconnect()
+
+    /// ヘルパーの登録を解除する（アンインストール導線）。
+    ///
+    /// 呼び出し側は `disablesleep` が 0 に戻ったことを**確認してから**呼ぶこと。
+    /// 先に解除すると、復元を担う唯一のプロセスが消える。
+    func unregister() throws
 }
 
 /// 電源と熱の観測。

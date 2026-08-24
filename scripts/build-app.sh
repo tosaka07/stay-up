@@ -4,7 +4,7 @@
 # SwiftPM は .app バンドルを作れないので、ビルド成果物をここで配置する。
 #
 # Usage:
-#   scripts/build-app.sh [--release] [--sign <identity|auto>] [--install]
+#   scripts/build-app.sh [--release] [--universal] [--sign <identity|auto>] [--install]
 
 set -euo pipefail
 
@@ -13,14 +13,16 @@ cd "$(dirname "$0")/.."
 CONFIGURATION="debug"
 SIGN_IDENTITY=""
 INSTALL=0
+UNIVERSAL=0
 
 while (( $# > 0 )); do
   case "$1" in
-    --release) CONFIGURATION="release"; shift ;;
+    --release)   CONFIGURATION="release"; shift ;;
+    --universal) UNIVERSAL=1; shift ;;
     --sign)    SIGN_IDENTITY="${2:?--sign には識別子が必要です}"; shift 2 ;;
     --install) INSTALL=1; shift ;;
     -h|--help)
-      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "不明な引数です: $1" >&2; exit 2 ;;
@@ -41,10 +43,18 @@ fi
 
 APP_NAME="StayUp"
 BUNDLE="build/${APP_NAME}.app"
-BIN_DIR="$(swift build --configuration "$CONFIGURATION" --show-bin-path)"
+# 空配列の展開は bash 3.2 の set -u で落ちるので、存在するときだけ展開する
+ARCH_FLAGS=()
+BUILD_LABEL="$CONFIGURATION"
+if (( UNIVERSAL )); then
+  ARCH_FLAGS=(--arch arm64 --arch x86_64)
+  BUILD_LABEL="${CONFIGURATION}, universal"
+fi
+BIN_DIR="$(swift build --configuration "$CONFIGURATION" \
+  ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
 
-echo "==> ビルド (${CONFIGURATION})"
-swift build --configuration "$CONFIGURATION"
+echo "==> ビルド (${BUILD_LABEL})"
+swift build --configuration "$CONFIGURATION" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}
 
 echo "==> バンドルを構成"
 rm -rf "$BUNDLE"
@@ -62,6 +72,18 @@ cp Resources/dev.tosaka.StayUp.Helper.plist \
    "$BUNDLE/Contents/Library/LaunchDaemons/dev.tosaka.StayUp.Helper.plist"
 
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
+
+if (( UNIVERSAL )); then
+  echo "==> アーキテクチャを検証"
+  for exe in "${APP_NAME}" stay-up StayUpHelper; do
+    ARCHS="$(lipo -archs "$BUNDLE/Contents/MacOS/$exe")"
+    if [[ "$ARCHS" != *arm64* || "$ARCHS" != *x86_64* ]]; then
+      echo "$exe がユニバーサルではありません: $ARCHS" >&2
+      exit 5
+    fi
+    echo "    $exe: $ARCHS"
+  done
+fi
 
 echo "==> アイコンをコンパイル"
 if ACTOOL="$(xcrun --find actool 2>/dev/null)"; then
@@ -88,8 +110,10 @@ if [[ -n "$SIGN_IDENTITY" ]]; then
   echo "==> 署名 (${SIGN_IDENTITY})"
   # ヘルパーを先に署名してからアプリを署名する（内側から外側へ）
   codesign --force --options runtime --timestamp \
+    --identifier dev.tosaka.StayUp.Helper \
     --sign "$SIGN_IDENTITY" "$BUNDLE/Contents/MacOS/StayUpHelper"
   codesign --force --options runtime --timestamp \
+    --identifier dev.tosaka.StayUp.CLI \
     --sign "$SIGN_IDENTITY" "$BUNDLE/Contents/MacOS/stay-up"
   codesign --force --options runtime --timestamp \
     --sign "$SIGN_IDENTITY" "$BUNDLE"
@@ -122,7 +146,8 @@ else
   echo "==> 署名なし（ad-hoc）"
   # 未署名だと SMAppService がヘルパーを登録できない。
   # アプリ自体は degraded（アイドル抑止のみ）で動く。
-  codesign --force --sign - "$BUNDLE/Contents/MacOS/StayUpHelper" 2>/dev/null || true
+  codesign --force --identifier dev.tosaka.StayUp.Helper \
+    --sign - "$BUNDLE/Contents/MacOS/StayUpHelper" 2>/dev/null || true
   codesign --force --sign - "$BUNDLE" 2>/dev/null || true
   echo "    注意: ヘルパーの登録には Developer ID 署名が必要です。"
   echo "          未署名のままでも、アイドルスリープ抑止だけは動作します。"

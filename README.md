@@ -30,11 +30,13 @@ macOS 26 以降。UI を標準コンポーネントだけで組み、Liquid Glas
 ./scripts/build-app.sh --release --install
 
 # 配布用（利用可能な Developer ID Application 証明書を自動選択）
-./scripts/build-app.sh --release --sign auto
+./scripts/build-app.sh --release --universal --sign auto
 
 # 証明書を明示する場合
 ./scripts/build-app.sh --release --sign "Developer ID Application: ..."
 ```
+
+`--universal` は arm64 と x86_64 の両方を含める。付けない場合はホストのアーキテクチャだけを作る。
 
 ```sh
 swift test
@@ -61,6 +63,31 @@ OS境界アダプタは対象外とし、下記の実アプリ回帰テストで
 ```
 
 クラッシュ復旧テストは root ヘルパーを実際に動かすため、Developer ID 署名済みのヘルパーがない環境では終了コード 77 でスキップする。
+
+## 配布物を作る
+
+```sh
+./scripts/release.sh
+```
+
+署名付きユニバーサルビルド、公証、ticket の staple、Gatekeeper 評価を順に行い、
+`dist/` に ZIP と SHA-256 を出す。
+
+事前にキーチェーンへ公証用の認証情報を保存しておく。
+
+```sh
+xcrun notarytool store-credentials "StayUp" \
+  --key <AuthKey.p8> --key-id <KEY_ID> --issuer <ISSUER_ID>
+```
+
+別名で保存した場合は `--profile` で指定する。
+`--skip-build` を付けると既存の `build/StayUp.app` をそのまま公証へ回す。
+
+公証は Accepted でもログに警告が出ることがあるため、必ず読んで表示する。
+Team ID のない ad-hoc ビルドは終了コード 3、公証が Accepted にならなければ 6、
+`spctl` が公証済みと認識しなければ 7 で停止する。
+
+ZIP には ticket を staple できないので、staple 済みの `.app` から最終 ZIP を作り直している。
 
 ## 使い方
 
@@ -157,3 +184,19 @@ CLI から状態を書き換えられるということは、「Mac をスリー
 - コントロールセンター対応は初期リリースの対象外
   （[理由](docs/spec.md#スコープ外とした導線-コントロールセンター)）
 - CPU アイドルによる自動解除は未実装（設定項目のみ）
+- **他のスリープ抑止ツールとの併用は想定していない**。`pmset disablesleep` は
+  システム全体で 1 つの値しか持たないため、どちらかの解除がもう一方を巻き添えにする。
+  StayUp のヘルパーは起動時に所有者のいない `disablesleep=1` を戻すので、
+  他ツールが設定した値も戻してしまう（[spec §10](docs/spec.md#10-エラーハンドリング) との差分）
+- XPC 接続が切れたときの再接続リトライは未実装。即座に `degraded` へ降格する
+  （降格自体は通知される）
+- 通知は「グローバル条件による強制失効」と「復元失敗」のみ。
+  [spec §8.4](docs/spec.md#84-通知) の他の項目は未実装
+- **未承認クライアントの承認ダイアログは自分では閉じない**。放置すると呼び出し元は
+  35 秒待たされ、その間アプリの UI も固まる。
+  ただし 30 秒の時点で拒否が確定するので、**後から「許可」を押してもリースは作られない**。
+  `--owner` を一度承認すれば以降このダイアログは出ない
+
+## ライセンス
+
+MIT License. 詳細は [LICENSE](LICENSE) を参照。

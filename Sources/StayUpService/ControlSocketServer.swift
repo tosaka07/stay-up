@@ -249,12 +249,32 @@ public final class ControlRequestHandler: @unchecked Sendable {
 
         let sleepDisabled = PMSet.sleepDisabled()
         let leaseCount = manager.leases.count
+        // 孤児: StayUp は何も抑止していないのに 1 が残っている。
         let orphaned = sleepDisabled == true && leaseCount == 0
+        // 乖離: full と表示しているのに、実際には抑止されていない。
+        // 台帳を持つ以上、実測値と食い違いうる。UI が嘘をついたまま
+        // ふたを閉じられるのがいちばん危ないので、ここで検知する。
+        // degraded は 0 が正しい状態なので対象にしない。
+        let overstated = sleepDisabled == false
+            && leaseCount > 0
+            && manager.capability == .full
         checks.append(DoctorReport.Check(
             name: "pmset disablesleep",
-            ok: !orphaned,
+            ok: !orphaned && !overstated,
             detail: "SleepDisabled=\(sleepDisabled.map { $0 ? "1" : "0" } ?? "不明"), リース \(leaseCount) 件",
-            remedy: orphaned ? "StayUp の診断タブから「スリープ設定を強制的に復元」を実行してください" : nil
+            remedy: {
+                if orphaned {
+                    return "StayUp の診断タブから「スリープ設定を強制的に復元」を実行してください"
+                }
+                if overstated {
+                    return """
+                        抑止中と表示していますが、実際には抑止されていません。\
+                        他のツールが disablesleep を 0 に戻した可能性があります。\
+                        セッションを停止して開始し直してください。
+                        """
+                }
+                return nil
+            }()
         ))
 
         checks.append(DoctorReport.Check(

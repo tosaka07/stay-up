@@ -38,7 +38,7 @@ osascript \
     -e 'delay 0.3' \
     -e 'tell application "System Events" to tell process "StayUp" to tell menu item "StayUpを開始" of menu 1 of menu bar item 1 of menu bar 2 to perform action "AXShowMenu"' \
     -e 'delay 0.2' \
-    -e 'tell application "System Events" to tell process "StayUp" to click menu item "30分" of menu 1 of menu item "StayUpを開始" of menu 1 of menu bar item 1 of menu bar 2' \
+    -e 'tell application "System Events" to tell process "StayUp" to click menu item "30分で開始" of menu 1 of menu item "StayUpを開始" of menu 1 of menu bar item 1 of menu bar 2' \
     -e 'delay 0.8'
 
 active_json=$("$cli" status --json)
