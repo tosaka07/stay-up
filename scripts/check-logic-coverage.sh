@@ -22,6 +22,7 @@ targets=(
     "Sources/StayUpCore/HistoryStore.swift"
     "Sources/StayUpCore/Lease.swift"
     "Sources/StayUpCore/LeaseRegistry.swift"
+    "Sources/StayUpCore/PMSetOutput.swift"
     "Sources/StayUpCore/Settings.swift"
     "Sources/StayUpCore/StateStore.swift"
     "Sources/StayUpService/SessionManager.swift"

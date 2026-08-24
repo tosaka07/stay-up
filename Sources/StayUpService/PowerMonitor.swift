@@ -120,13 +120,7 @@ public enum PMSet {
     /// `pmset -g` の `SleepDisabled` の値。読めなければ nil。
     public static func sleepDisabled() -> Bool? {
         guard let output = run(["-g"]) else { return nil }
-        for line in output.split(separator: "\n") {
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-            if parts.count >= 2, parts[0] == "SleepDisabled" {
-                return parts[1] == "1"
-            }
-        }
-        return nil
+        return PMSetOutput.sleepDisabled(in: output)
     }
 
     /// `pmset -g assertions` の生出力（診断タブ用）。

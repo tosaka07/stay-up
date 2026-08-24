@@ -1,4 +1,5 @@
 import Foundation
+import StayUpCore
 
 /// root 権限で `pmset` を書き換える唯一の実行点。
 ///
@@ -50,13 +51,7 @@ enum PMSetWriter {
                   let output = String(data: data, encoding: .utf8)
             else { return nil }
 
-            for line in output.split(separator: "\n") {
-                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-                if parts.count >= 2, parts[0] == "SleepDisabled" {
-                    return parts[1] == "1"
-                }
-            }
-            return nil
+            return PMSetOutput.sleepDisabled(in: output)
         } catch {
             return nil
         }
