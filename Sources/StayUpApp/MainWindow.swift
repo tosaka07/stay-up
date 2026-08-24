@@ -22,6 +22,9 @@ struct MainWindow: View {
     @State private var helper = HelperClient()
     @State private var helperStatus: HelperStatus = .notRegistered
     @State private var isShowingHelperSetup = false
+    /// 初回のウォークスルーを見せたか。
+    @AppStorage("hasShownWelcome") private var hasShownWelcome = false
+    @State private var isShowingWelcome = false
 
     var body: some View {
         NavigationSplitView {
@@ -38,9 +41,20 @@ struct MainWindow: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 820, minHeight: 600)
-        .task { refreshHelperStatus() }
+        .task {
+            refreshHelperStatus()
+            // 初回だけウォークスルーを出す。
+            // 黙って degraded で動かすと、ふたを閉じて初めて設定が要ると気付く。
+            if !hasShownWelcome {
+                hasShownWelcome = true
+                isShowingWelcome = true
+            }
+        }
         .sheet(isPresented: $isShowingHelperSetup, onDismiss: refreshHelperStatus) {
             HelperSetupView(helper: helper)
+        }
+        .sheet(isPresented: $isShowingWelcome, onDismiss: refreshHelperStatus) {
+            WelcomeView(helper: helper)
         }
         .onDisappear {
             // ウィンドウを閉じたらメニューバー常駐に戻る。
@@ -64,7 +78,10 @@ struct MainWindow: View {
         case .integrations:
             IntegrationsView(manager: manager)
         case .settings:
-            SettingsView(manager: manager)
+            SettingsView(
+                manager: manager,
+                onShowWelcome: { isShowingWelcome = true }
+            )
         case .diagnostics:
             DiagnosticsView(
                 manager: manager,

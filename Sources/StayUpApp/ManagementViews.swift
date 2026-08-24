@@ -79,6 +79,7 @@ struct IntegrationsView: View {
 
 struct SettingsView: View {
     @Bindable var manager: SessionManager
+    let onShowWelcome: () -> Void
 
     /// macOS 側の登録状態を写したもの。真実は OS にあるので、操作のたびに読み直す。
     @State private var launchAtLogin = false
@@ -98,6 +99,10 @@ struct SettingsView: View {
                     "メニューバーに残り時間を表示",
                     isOn: $manager.settings.showRemainingInMenuBar
                 )
+
+                LabeledContent("はじめかた") {
+                    Button("ウォークスルーを開く", action: onShowWelcome)
+                }
             } header: {
                 Text("一般")
             }
@@ -385,127 +390,5 @@ struct DiagnosticsView: View {
 
         reload()
         onRefreshHelper()
-    }
-}
-
-struct HelperSetupView: View {
-    let helper: HelperClient
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var status: HelperStatus = .notRegistered
-    @State private var errorMessage: String?
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: status == .enabled
-                ? "checkmark.shield.fill"
-                : "laptopcomputer.and.arrow.down")
-                .font(.system(size: 48))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(status == .enabled ? Color.green : Color.accentColor)
-
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(.title2.weight(.semibold))
-                Text(message)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-            }
-
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-            }
-
-            setupAction
-
-            Text("ヘルパーはスリープ設定の切り替えだけを行い、任意のコマンドは実行できません。")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-        }
-        .padding(36)
-        .frame(width: 540)
-        .frame(minHeight: 360)
-        .task { refresh() }
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(status == .enabled ? "完了" : "閉じる") {
-                    dismiss()
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var setupAction: some View {
-        switch status {
-        case .notRegistered:
-            Button("ヘルパーを登録") {
-                do {
-                    try helper.register()
-                    errorMessage = nil
-                    refresh()
-                } catch {
-                    errorMessage = error.localizedDescription
-                    refresh()
-                }
-            }
-            .buttonStyle(.borderedProminent)
-
-        case .requiresApproval:
-            HStack {
-                Button("システム設定を開く") {
-                    helper.openLoginItemsSettings()
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button("状態を再確認") {
-                    refresh()
-                }
-            }
-
-        case .enabled:
-            Button("完了") {
-                dismiss()
-            }
-            .buttonStyle(.borderedProminent)
-
-        case .unavailable:
-            Button("状態を再確認") {
-                refresh()
-            }
-        }
-    }
-
-    private var title: String {
-        switch status {
-        case .notRegistered: "ふたを閉じても起動を続ける"
-        case .requiresApproval: "macOSで承認してください"
-        case .enabled: "設定が完了しました"
-        case .unavailable: "ヘルパーを利用できません"
-        }
-    }
-
-    private var message: String {
-        switch status {
-        case .notRegistered:
-            "初回だけヘルパーを登録します。ターミナルでsudoを実行する必要はありません。"
-        case .requiresApproval:
-            "「ログイン項目と機能拡張」でStayUpを許可したあと、状態を再確認してください。"
-        case .enabled:
-            "StayUpは、ふたを閉じたときのスリープも抑止できます。"
-        case .unavailable(let reason):
-            reason
-        }
-    }
-
-    private func refresh() {
-        status = helper.status
     }
 }
