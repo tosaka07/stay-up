@@ -60,7 +60,8 @@ public final class SessionManager {
     /// プロセス名が見つからないまま何秒続いたらバインドを失ったと見なすか（spec §7.3）。
     private let processNameGraceSeconds: TimeInterval
     /// 承認の応答を何秒待つか（spec §10）。
-    private let approvalTimeoutSeconds: TimeInterval
+    /// UI 側が同じ長さでダイアログを畳めるよう公開する。
+    public let approvalTimeoutSeconds: TimeInterval
     /// 承認待ち・承認済みの判断をここで一度だけ行う。
     private var sessionApprovedClients: Set<String> = []
 

@@ -203,16 +203,26 @@ final class AppServices {
         alert.addButton(withTitle: "拒否")
         alert.alertStyle = .informational
 
-        // このダイアログは自分では閉じない。
+        // 応答がないまま開きっぱなしにしない（spec §10）。
         //
-        // `runModal()` はメインスレッドを完全に握るため、DispatchQueue でも
-        // common モードの Timer でも畳めないことを実測で確認している。
-        // 自動で閉じるには非ブロッキングなシートに作り替える必要があり、0.1.0 では見送った。
-        //
-        // ただし SessionManager 側は 30 秒で拒否を確定させるので、
-        // 後から「許可」が押されてもリースは作られない（spec §10）。
+        // runModal() はメインスレッドを握るため、SessionManager 側で
+        // タイムアウトを確定させても、その再開が塞がったメインに積まれて届かない。
+        // 実測では acquire も status も 35 秒ブロックし、人が閉じるまで復帰しなかった。
+        // ここで畳むことが、アプリ全体を無応答にしないための唯一の経路になる。
+        let autoDismiss = Timer(
+            timeInterval: manager.approvalTimeoutSeconds,
+            repeats: false
+        ) { _ in
+            MainActor.assumeIsolated {
+                guard NSApp.modalWindow != nil else { return }
+                NSApp.abortModal()
+            }
+        }
+        RunLoop.main.add(autoDismiss, forMode: .common)
+
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
+        autoDismiss.invalidate()
 
         switch response {
         case .alertFirstButtonReturn:
