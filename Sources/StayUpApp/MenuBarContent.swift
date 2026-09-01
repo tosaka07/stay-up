@@ -160,7 +160,7 @@ struct MenuBarContent: View {
                     extendButton("1時間", lease: lease, seconds: 60 * 60)
                     extendButton("2時間", lease: lease, seconds: 2 * 60 * 60)
                 } label: {
-                    Label("延長", systemImage: "clock.badge.plus")
+                    Label("延長", systemImage: "clock.arrow.circlepath")
                 }
             }
 
