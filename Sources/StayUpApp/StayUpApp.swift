@@ -53,11 +53,13 @@ private struct MenuBarLabel: View {
     @State private var now = Date()
 
     var body: some View {
-        // 状態を色ではなくシンボルで表す（色だけで状態を表現しない）。
+        // 抑止中は色つきの下地を敷いて、一目で分かるようにする。
+        // 色だけに頼らず、シンボルも状態ごとに変える（色覚に依存させない）。
         Label {
             Text(title)
         } icon: {
-            Image(systemName: symbol)
+            Image(nsImage: MenuBarIcon.make(symbol: symbol, background: background))
+                .renderingMode(.original)
         }
         .task {
             guard presentsInitialWindow, !hasPresentedInitialWindow else { return }
@@ -72,6 +74,18 @@ private struct MenuBarLabel: View {
                 guard !Task.isCancelled else { break }
                 now = .now
             }
+        }
+    }
+
+    /// 抑止中だけ下地を付ける。待機中は nil を返し、素のアイコンに戻す。
+    ///
+    /// `degraded` を赤と分けるのは、どちらも抑止中だが効き方が違うためである。
+    /// 同じ赤にすると、ふたを閉じて大丈夫だと誤解させる。
+    private var background: NSColor? {
+        switch manager.state {
+        case .active: .systemRed
+        case .degraded: .systemOrange
+        case .idle, .activating, .deactivating: nil
         }
     }
 
